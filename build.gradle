@@ -1,10 +1,19 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
 }
+
+def javafxNativeAccessArg = '--enable-native-access=javafx.graphics'
 
 group = 'Quantum'
 version = '1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
 
 repositories {
     mavenCentral()
@@ -16,10 +25,21 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+javafx {
+    version = '21.0.2'
+    modules = ['javafx.controls', 'javafx.graphics']
+}
+
 test {
     useJUnitPlatform()
 }
 
+tasks.withType(JavaExec).configureEach {
+    jvmArgs += [javafxNativeAccessArg]
+}
+
 application {
+    mainModule = 'quantum.graphingcalculator'
     mainClass = 'Quantum.Main'
+    applicationDefaultJvmArgs = [javafxNativeAccessArg]
 }
