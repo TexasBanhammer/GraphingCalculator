@@ -12,9 +12,13 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.FlowLayout;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -67,6 +71,7 @@ public final class Main {
 
         JPanel inputPanel = new JPanel(new BorderLayout(10, 10));
         inputPanel.setOpaque(false);
+        inputPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
 
         JLabel titleLabel = new JLabel("Functions");
         titleLabel.setFont(new Font("Segoe UI Semibold", Font.PLAIN, 18));
@@ -96,31 +101,35 @@ public final class Main {
         JButton zoomOutButton = createSecondaryButton("Zoom Out");
         zoomOutButton.addActionListener(event -> graphPanel.zoomOut());
 
+        JButton resetZoomButton = createSecondaryButton("Reset Zoom");
+        resetZoomButton.addActionListener(event -> graphPanel.resetView());
+
         JButton intersectionsButton = createSecondaryButton("Intersections");
         intersectionsButton.addActionListener(event -> showIntersectionsDialog(graphPanel));
 
         JButton differentiateButton = createSecondaryButton("Differentiate");
-        differentiateButton.addActionListener(event -> showDifferentiateDialog(frame, activeField, expressionRows));
+        differentiateButton.addActionListener(event -> appendCalculatedExpression("diff", activeField, expressionRows, expressionsPanel, graphPanel));
 
         JButton integrateButton = createSecondaryButton("Integrate");
-        integrateButton.addActionListener(event -> showIntegrateDialog(frame, activeField, expressionRows));
+        integrateButton.addActionListener(event -> appendCalculatedExpression("int", activeField, expressionRows, expressionsPanel, graphPanel));
 
         JPanel topPanel = new JPanel(new BorderLayout(10, 10));
         topPanel.setBorder(BorderFactory.createEmptyBorder(18, 18, 0, 18));
         topPanel.setOpaque(false);
-        topPanel.add(inputPanel, BorderLayout.CENTER);
+        topPanel.add(inputPanel, BorderLayout.NORTH);
 
-        JPanel actionsPanel = new JPanel(new GridLayout(1, 8, 8, 0));
+        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(graphButton);
         actionsPanel.add(addFunctionButton);
         actionsPanel.add(clearButton);
         actionsPanel.add(zoomInButton);
         actionsPanel.add(zoomOutButton);
+        actionsPanel.add(resetZoomButton);
         actionsPanel.add(intersectionsButton);
         actionsPanel.add(differentiateButton);
         actionsPanel.add(integrateButton);
-        topPanel.add(actionsPanel, BorderLayout.EAST);
+        topPanel.add(actionsPanel, BorderLayout.CENTER);
         topPanel.add(summaryLabel, BorderLayout.SOUTH);
 
         JPanel keypadPanel = createKeypad(activeField, expressionRows, graphPanel);
@@ -339,6 +348,96 @@ public final class Main {
         );
     }
 
+    private static void appendCalculatedExpression(
+            String operation,
+            JTextField[] activeField,
+            List<ExpressionRow> expressionRows,
+            JPanel expressionsPanel,
+            GraphPanel graphPanel
+    ) {
+        ActiveExpression activeExpression = getActiveExpression(activeField, expressionRows);
+        if (activeExpression == null) {
+            JOptionPane.showMessageDialog(graphPanel, "Select a function row with an expression first.", "Missing Expression", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String generatedExpression = operation + "(" + activeExpression.text + ")";
+        addExpressionRow(expressionRows, expressionsPanel, graphPanel, activeField, generatedExpression);
+        ExpressionRow newRow = expressionRows.get(expressionRows.size() - 1);
+        activeField[0] = newRow.field;
+        newRow.field.requestFocusInWindow();
+        applyExpressions(graphPanel, expressionRows);
+    }
+
+    private static ActiveExpression getActiveExpression(JTextField[] activeField, List<ExpressionRow> expressionRows) {
+        JTextField field = resolveActiveField(activeField, expressionRows);
+        if (field == null) {
+            return null;
+        }
+
+        String text = field.getText() == null ? "" : field.getText().trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+
+        for (int index = 0; index < expressionRows.size(); index++) {
+            ExpressionRow row = expressionRows.get(index);
+            if (row.field == field) {
+                return new ActiveExpression("f" + (index + 1), text);
+            }
+        }
+
+        return null;
+    }
+
+    private static double approximateDerivative(ExpressionParser.Expression expression, double x) {
+        double step = Math.max(1e-5, Math.abs(x) * 1e-5);
+        double left = evaluateOrThrow(expression, x - step);
+        double right = evaluateOrThrow(expression, x + step);
+        return (right - left) / (2.0 * step);
+    }
+
+    private static double approximateIntegral(ExpressionParser.Expression expression, double lowerBound, double upperBound) {
+        if (Math.abs(upperBound - lowerBound) < 1e-12) {
+            return 0.0;
+        }
+
+        double start = lowerBound;
+        double end = upperBound;
+        double sign = 1.0;
+        if (upperBound < lowerBound) {
+            start = upperBound;
+            end = lowerBound;
+            sign = -1.0;
+        }
+
+        int intervals = 2000;
+        double step = (end - start) / intervals;
+        double sum = evaluateOrThrow(expression, start) + evaluateOrThrow(expression, end);
+
+        for (int index = 1; index < intervals; index++) {
+            double x = start + (index * step);
+            double value = evaluateOrThrow(expression, x);
+            sum += (index % 2 == 0 ? 2.0 : 4.0) * value;
+        }
+
+        return sign * (step / 3.0) * sum;
+    }
+
+    private static double evaluateOrThrow(ExpressionParser.Expression expression, double x) {
+        double value;
+        try {
+            value = expression.evaluate(x);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("The function could not be evaluated in the requested range.");
+        }
+
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            throw new IllegalArgumentException("The function could not be evaluated in the requested range.");
+        }
+        return value;
+    }
+
     private static JPanel createKeypad(JTextField[] activeField, List<ExpressionRow> expressionRows, GraphPanel graphPanel) {
         JPanel container = new JPanel();
         container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
@@ -427,43 +526,43 @@ public final class Main {
     private static JButton createKeyButton(String text) {
         JButton button = new JButton(text);
         button.setFocusPainted(false);
-        button.setFont(new Font("Segoe UI", Font.PLAIN, 15));
+        button.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         button.setBackground(new Color(255, 255, 255));
         button.setOpaque(true);
         button.setBorder(BorderFactory.createLineBorder(new Color(213, 219, 229), 1));
-        button.setPreferredSize(new Dimension(62, 44));
-        button.setMargin(new Insets(4, 6, 4, 6));
+        button.setPreferredSize(new Dimension(52, 34));
+        button.setMargin(new Insets(2, 4, 2, 4));
         return button;
     }
 
     private static JButton createActionButton(String text) {
         JButton button = new JButton(text);
         button.setFocusPainted(false);
-        button.setFont(new Font("Segoe UI Semibold", Font.PLAIN, 16));
+        button.setFont(new Font("Segoe UI Semibold", Font.PLAIN, 14));
         button.setBackground(new Color(26, 95, 122));
         button.setForeground(Color.WHITE);
         button.setOpaque(true);
-        button.setBorder(BorderFactory.createEmptyBorder(12, 20, 12, 20));
+        button.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
         return button;
     }
 
     private static JButton createSecondaryButton(String text) {
         JButton button = new JButton(text);
         button.setFocusPainted(false);
-        button.setFont(new Font("Segoe UI", Font.PLAIN, 16));
+        button.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         button.setBackground(new Color(228, 232, 238));
         button.setOpaque(true);
-        button.setBorder(BorderFactory.createEmptyBorder(12, 20, 12, 20));
+        button.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
         return button;
     }
 
     private static JButton createRowButton(String text) {
         JButton button = new JButton(text);
         button.setFocusPainted(false);
-        button.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        button.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         button.setBackground(new Color(235, 238, 243));
         button.setOpaque(true);
-        button.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        button.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
         return button;
     }
 
@@ -489,6 +588,16 @@ public final class Main {
             this.colorChip = colorChip;
             this.field = field;
             this.removeButton = removeButton;
+        }
+    }
+
+    private static final class ActiveExpression {
+        private final String label;
+        private final String text;
+
+        private ActiveExpression(String label, String text) {
+            this.label = label;
+            this.text = text;
         }
     }
 
@@ -534,10 +643,41 @@ public final class Main {
         private double xMax = DEFAULT_RANGE;
         private double yMin = -DEFAULT_RANGE;
         private double yMax = DEFAULT_RANGE;
+        private Point dragAnchor;
+        private double dragStartXMin;
+        private double dragStartXMax;
+        private double dragStartYMin;
+        private double dragStartYMax;
 
         private GraphPanel() {
             setPreferredSize(new Dimension(820, 640));
             setBorder(BorderFactory.createEmptyBorder(18, 18, 18, 18));
+            MouseAdapter panHandler = new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent event) {
+                    dragAnchor = event.getPoint();
+                    dragStartXMin = xMin;
+                    dragStartXMax = xMax;
+                    dragStartYMin = yMin;
+                    dragStartYMax = yMax;
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent event) {
+                    if (dragAnchor == null) {
+                        return;
+                    }
+
+                    panView(event.getPoint());
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent event) {
+                    dragAnchor = null;
+                }
+            };
+            addMouseListener(panHandler);
+            addMouseMotionListener(panHandler);
         }
 
         private void setExpressions(List<String> texts) {
@@ -579,19 +719,51 @@ public final class Main {
             applyZoom(1.0 / ZOOM_FACTOR);
         }
 
+        private void resetView() {
+            xMin = -DEFAULT_RANGE;
+            xMax = DEFAULT_RANGE;
+            yMin = -DEFAULT_RANGE;
+            yMax = DEFAULT_RANGE;
+            updateIntersections();
+            repaint();
+        }
+
         private void applyZoom(double factor) {
+            double centerX = (xMin + xMax) / 2.0;
+            double centerY = (yMin + yMax) / 2.0;
             double currentRange = (xMax - xMin) / 2.0;
             double nextRange = clamp(currentRange * factor, MIN_RANGE, MAX_RANGE);
-            xMin = -nextRange;
-            xMax = nextRange;
-            yMin = -nextRange;
-            yMax = nextRange;
+            xMin = centerX - nextRange;
+            xMax = centerX + nextRange;
+            yMin = centerY - nextRange;
+            yMax = centerY + nextRange;
             updateIntersections();
             repaint();
         }
 
         private double clamp(double value, double min, double max) {
             return Math.max(min, Math.min(max, value));
+        }
+
+        private void panView(Point currentPoint) {
+            int width = getWidth();
+            int height = getHeight();
+            int left = 44;
+            int top = 34;
+            int plotWidth = Math.max(1, width - left - 24);
+            int plotHeight = Math.max(1, height - top - 44);
+
+            double xRange = dragStartXMax - dragStartXMin;
+            double yRange = dragStartYMax - dragStartYMin;
+            double xShift = ((double) (currentPoint.x - dragAnchor.x) / plotWidth) * xRange;
+            double yShift = ((double) (currentPoint.y - dragAnchor.y) / plotHeight) * yRange;
+
+            xMin = dragStartXMin - xShift;
+            xMax = dragStartXMax - xShift;
+            yMin = dragStartYMin + yShift;
+            yMax = dragStartYMax + yShift;
+            updateIntersections();
+            repaint();
         }
 
         @Override
@@ -727,8 +899,9 @@ public final class Main {
                 for (int pixel = 0; pixel < plotWidth; pixel++) {
                     double xValue = xMin + ((double) pixel / plotWidth) * (xMax - xMin);
                     double yValue = safeEvaluate(expression.expression, xValue);
+                    double yMargin = (yMax - yMin) * 3.0;
 
-                    if (!isFinite(yValue) || yValue < yMin * 4 || yValue > yMax * 4) {
+                    if (!isFinite(yValue) || yValue < yMin - yMargin || yValue > yMax + yMargin) {
                         hasPrevious = false;
                         continue;
                     }
@@ -1045,6 +1218,8 @@ public final class Main {
                 case "log" -> x -> Math.log10(argument.evaluate(x));
                 case "ln" -> x -> Math.log(argument.evaluate(x));
                 case "abs" -> x -> Math.abs(argument.evaluate(x));
+                case "diff" -> x -> approximateDerivative(argument, x);
+                case "int" -> x -> approximateIntegral(argument, 0.0, x);
                 default -> throw new IllegalArgumentException("Unknown function: " + name);
             };
         }
